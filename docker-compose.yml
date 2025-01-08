@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: pintar_ekspor
+      POSTGRES_USER: expor_user
+      POSTGRES_PASSWORD: AKUADALAHSANGPEMILIKD13!
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expor_user -d pintar_ekspor"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://expor_user:AKUADALAHSANGPEMILIKD13!@db:5432/pintar_ekspor
+      - CORS_ORIGINS=["http://localhost:8000","http://127.0.0.1:8000"]
+    depends_on:
+      db:
+        condition: service_healthy  # Wait for db to be healthy before starting
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: pintar_ekspor_data  # Named volume for easier identification
+
+networks:
+  app-network:
+    driver: bridge
+    name: pintar_ekspor_network  # Named network for easier identification
