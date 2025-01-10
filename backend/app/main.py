@@ -137,28 +137,23 @@ rate_limit_middleware = RateLimitMiddleware(app)
 
 # Configure trusted hosts
 app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=[
-        "localhost",
-        "127.0.0.1",
-        "*"  # Allow all hosts in development
-    ]
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS.split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Add security headers
 app.add_middleware(
     SecurityHeadersMiddleware,
-    allowed_hosts=[
-        "localhost",
-        "127.0.0.1",
-        "*"  # Allow all hosts in development
-    ]
+    allowed_hosts=settings.ALLOWED_HOSTS.split(",")
 )
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000"],
+    allow_origins=settings.ALLOWED_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -176,24 +171,6 @@ async def custom_swagger_ui_html():
         swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
         swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
     )
-
-# Configure enhanced CORS
-allowed_origins = [
-    "http://localhost:3000",
-    "https://pintar-ekspor.vercel.app"
-]
-
-if settings.ENV == "development":
-    allowed_origins.extend([
-        "http://localhost:*",
-        "http://127.0.0.1:*"
-    ])
-
-app.add_middleware(
-    CORSConfigMiddleware,
-    allowed_origins=allowed_origins,
-    allow_credentials=True
-)
 
 # Add rate limiting
 app.state.rate_limit_middleware = rate_limit_middleware

@@ -3,7 +3,7 @@ import axios from 'axios';
 import { AuthResponse, User } from '../types';
 
 export class AuthService {
-  private baseURL = 'http://localhost:8000';
+  private baseURL = import.meta.env.VITE_API_URL || 'https://pintar-ekspor-backend.up.railway.app';
 
   async login(email: string, password: string): Promise<AuthResponse> {
     try {
