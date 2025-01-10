@@ -120,14 +120,17 @@ def _safe_json_response(data: Dict[str, Any]) -> Dict[str, Any]:
 async def analyze_data(
     request: Request,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_authenticated_user),
     include_forecast: bool = Query(True),
     include_visualizations: bool = Query(False),
     export_format: Optional[str] = Query(None, regex="^(csv|json)$"),
 ):
     """
-    Primary endpoint for comprehensive data analysis with enhanced error handling
+    Primary endpoint for comprehensive data analysis.
+    Supports both authentication methods:
+    - JWT token (for web interface users)
+    - API key (for developers)
     """
     async def process_with_timeout(coro, timeout=30):
         try:

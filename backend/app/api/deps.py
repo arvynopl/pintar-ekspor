@@ -10,13 +10,7 @@ from typing import Union, Optional
 
 from ..models.base import get_db
 from ..models.user import User, UserRole
-from ..core.security import verify_token
-
-# OAuth2 token authentication
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
-
-# API key authentication methods
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+from ..core.security import verify_token, api_key_manager, oauth2_scheme, api_key_header
 
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
@@ -24,26 +18,17 @@ async def get_current_user(
 ) -> Optional[User]:
     """
     Validate access token and retrieve the current user
-    Now returns Optional[User] instead of raising an exception
     """
     if not token:
         return None
-        
     try:
-        # Verify token and extract payload
         payload = verify_token(token)
-        email: str = payload.get("sub")
-        
-        if email is None:
-            return None
-            
-        # Retrieve user from database
-        user = db.query(User).filter(User.email == email).first()
-        return user
-        
+        email = payload.get("sub")
+        if email:
+            return db.query(User).filter(User.email == email).first()
     except Exception:
         return None
-
+    return None
 
 async def get_api_key_user(
     api_key: Optional[str] = Depends(api_key_header),
@@ -53,8 +38,7 @@ async def get_api_key_user(
     Validate API key from header or query parameter
     
     Args:
-        api_key_header (str, optional): API key from header
-        api_key_query (str, optional): API key from query parameter
+        api_key (str, optional): API key from header
         db (Session): Database session
     
     Returns:
@@ -65,36 +49,20 @@ async def get_api_key_user(
     """
     if not api_key:
         return None
-    
-    # Find user with matching API key and developer role
-    user = db.query(User).filter(
-        User.api_key == api_key,
-        User.role == UserRole.DEVELOPER.value
-    ).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    
-    return user
+    return await api_key_manager.validate_api_key(api_key, db)
 
 async def get_authenticated_user(
+    db: Session = Depends(get_db),
     jwt_user: Optional[User] = Depends(get_current_user),
-    api_key_user: Optional[User] = Depends(get_api_key_user),
-    db: Session = Depends(get_db)
+    api_key_user: Optional[User] = Depends(get_api_key_user)
 ) -> User:
-    """
-    Combined authentication that checks both JWT and API key
-    Raises exception only if neither authentication method works
-    """
+    """Combined authentication"""
     user = jwt_user or api_key_user
     
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Valid authentication required (JWT token or API key)",
+            detail="Authentication required: either JWT token or API key",
             headers={"WWW-Authenticate": "Bearer"}
         )
     

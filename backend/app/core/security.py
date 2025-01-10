@@ -14,6 +14,10 @@ from ..models.base import get_db
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Define security schemes
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ALGORITHM = "HS256"
@@ -91,7 +95,7 @@ def get_password_hash(password: str) -> str:
 class APIKeyManager:
     def __init__(self):
         self._rate_limits: Dict[str, Dict] = {}
-        self.max_requests = 100  # Requests per window
+        self.max_requests = 1000  # Requests per window
         self.window_size = 3600  # Window size in seconds (1 hour)
 
     async def generate_api_key(self) -> str:
@@ -100,36 +104,28 @@ class APIKeyManager:
 
     async def validate_api_key(
         self,
-        api_key: str = Security(APIKeyHeader(name="X-API-Key")),
-        db: Session = Depends(get_db)
-    ) -> User:
-        """Validate API key and check rate limits"""
+        api_key: str,
+        db: Session
+    ) -> Optional[User]:
+        """Validate API key and return user"""
+        if not api_key:
+            return None
+        
         try:
             user = db.query(User).filter(
                 User.api_key == api_key,
-                User.role == UserRole.DEVELOPER
+                User.role == UserRole.DEVELOPER.value
             ).first()
             
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid API key or insufficient permissions",
-                    headers={"WWW-Authenticate": "ApiKey"},
-                )
-
-            self._check_rate_limit(api_key)
-            self._update_rate_limit(api_key)
+            if user:
+                self._check_rate_limit(api_key)
+                self._update_rate_limit(api_key)
+                return user
+            return None
             
-            return user
-
-        except HTTPException:
-            raise
         except Exception as e:
             logger.error(f"API key validation error: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error during API key validation"
-            )
+            return None
 
     def _check_rate_limit(self, api_key: str) -> None:
         """Check if the API key has exceeded its rate limit"""
