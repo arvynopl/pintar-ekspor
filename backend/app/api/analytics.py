@@ -24,7 +24,9 @@ from ..core.rate_limit import RateLimitMiddleware
 from ..core.audit import AuditLogger
 from .deps import (
     get_current_user,
-    get_current_developer, 
+    get_current_developer,
+    get_current_admin,
+    get_authenticated_user,
     get_api_key_user,
     get_db
 )
@@ -118,7 +120,7 @@ def _safe_json_response(data: Dict[str, Any]) -> Dict[str, Any]:
 async def analyze_data(
     request: Request,
     file: UploadFile = File(...),
-    current_user_tuple: Tuple[User, str] = Depends(get_analytics_user),
+    current_user: User = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
     include_forecast: bool = Query(True),
     include_visualizations: bool = Query(False),
@@ -127,8 +129,6 @@ async def analyze_data(
     """
     Primary endpoint for comprehensive data analysis with enhanced error handling
     """
-    current_user, auth_type = current_user_tuple
-
     async def process_with_timeout(coro, timeout=30):
         try:
             return await asyncio.wait_for(coro, timeout)
@@ -141,32 +141,34 @@ async def analyze_data(
     try:
         # 1. Process uploaded file with timeout
         try:
-            pair_dataframes = await process_with_timeout(
-                data_handler.process_upload(file)
-            )
+            # data_handler.process_upload is already async
+            pair_dataframes = await data_handler.process_upload(file)
             if not pair_dataframes:
                 raise AnalyticsError("No valid data found in uploaded file")
             logger.info(f"Processed {len(pair_dataframes)} category pairs")
         except Exception as e:
             raise AnalyticsError("Error processing upload", {"error": str(e)})
 
-        # Add audit log with error handling
+        # 2. Add audit log
         try:
             audit_logger = AuditLogger(db)
-            await process_with_timeout(audit_logger.log_change(
+            # Run synchronous audit logging in a thread
+            await asyncio.to_thread(
+                audit_logger.log_change,
                 action="ANALYZE_DATA",
                 table_name="analytics_data",
                 user_id=current_user.id,
                 ip_address=request.client.host
-            ))
+            )
         except Exception as e:
             logger.error(f"Audit logging error: {str(e)}")
             # Continue processing even if audit log fails
 
-        # 2. Clean data
+        # 3. Clean data
         try:
-            cleaned_pairs, quality_metrics = await process_with_timeout(
-                asyncio.to_thread(data_cleaner.clean_pairs, pair_dataframes)
+            cleaned_pairs, quality_metrics = await asyncio.to_thread(
+                data_cleaner.clean_pairs,
+                pair_dataframes
             )
             if not cleaned_pairs:
                 raise AnalyticsError("No valid data after cleaning")
@@ -174,10 +176,11 @@ async def analyze_data(
         except Exception as e:
             raise AnalyticsError("Error cleaning data", {"error": str(e)})
 
-        # 3. Transform data
+        # 4. Transform data
         try:
-            transformed_pairs, transform_metrics = await process_with_timeout(
-                asyncio.to_thread(data_transformer.transform_pairs, cleaned_pairs)
+            transformed_pairs, transform_metrics = await asyncio.to_thread(
+                data_transformer.transform_pairs,
+                cleaned_pairs
             )
             if not transformed_pairs:
                 raise AnalyticsError("No valid data after transformation")
@@ -185,14 +188,12 @@ async def analyze_data(
         except Exception as e:
             raise AnalyticsError("Error transforming data", {"error": str(e)})
 
-        # 4. Perform analysis
+        # 5. Perform analysis
         try:
-            analysis_results = await process_with_timeout(
-                asyncio.to_thread(
-                    analytics_service.analyze_pairs,
-                    transformed_pairs,
-                    include_forecast=include_forecast
-                )
+            analysis_results = await asyncio.to_thread(
+                analytics_service.analyze_pairs,
+                transformed_pairs,
+                include_forecast=include_forecast
             )
             if not analysis_results:
                 raise AnalyticsError("Analysis produced no valid results")
@@ -200,36 +201,33 @@ async def analyze_data(
         except Exception as e:
             raise AnalyticsError("Error performing analysis", {"error": str(e)})
 
-        # 5. Generate visualizations
+        # 6. Generate visualizations
         visualizations = {}
-        try:
-            for pair_key, analysis in analysis_results.items():
-                # Trend chart
-                trend_chart = await process_with_timeout(
-                    asyncio.to_thread(
+        if include_visualizations:
+            try:
+                for pair_key, analysis in analysis_results.items():
+                    # Generate trend chart
+                    trend_chart = await asyncio.to_thread(
                         chart_generator.generate_trend_chart,
                         transformed_pairs[pair_key],
                         analysis.trend_analysis,
                         analysis.forecast if include_forecast else None
                     )
-                )
-                if trend_chart:
-                    visualizations[f"{pair_key}_trend"] = trend_chart
+                    if trend_chart:
+                        visualizations[f"{pair_key}_trend"] = trend_chart
 
-            # Category strength chart
-            strength_chart = await process_with_timeout(
-                asyncio.to_thread(
+                # Generate category strength chart
+                strength_chart = await asyncio.to_thread(
                     chart_generator.generate_category_strength_chart,
                     analysis_results
                 )
-            )
-            if strength_chart:
-                visualizations['category_strength'] = strength_chart
-        except Exception as e:
-            logger.error(f"Error generating visualizations: {str(e)}")
-            # Continue without visualizations if they fail
+                if strength_chart:
+                    visualizations['category_strength'] = strength_chart
+            except Exception as e:
+                logger.error(f"Error generating visualizations: {str(e)}")
+                # Continue without visualizations if they fail
 
-        # Prepare response
+        # 7. Prepare response
         response_data = {
             "timestamp": datetime.now().isoformat(),
             "analysis": {
@@ -245,8 +243,6 @@ async def analyze_data(
 
         # Ensure response is JSON-safe
         safe_response = _safe_json_response(response_data)
-
-        # Ensure safe serialization
         json_compatible_data = jsonable_encoder(
             safe_response,
             custom_encoder={
@@ -256,18 +252,15 @@ async def analyze_data(
             }
         )
 
-        # Export if format specified
+        # 8. Export if format specified
         if export_format:
             try:
                 if export_format == 'csv':
-                    content = await process_with_timeout(
-                        asyncio.to_thread(
-                            content = exporter.export_to_csv(
-                                transformed_pairs, 
-                                analysis_results,
-                                visualizations if include_visualizations else None
-                            )
-                        )
+                    content = await asyncio.to_thread(
+                        exporter.export_to_csv,
+                        transformed_pairs, 
+                        analysis_results,
+                        visualizations if include_visualizations else None
                     )
                     return Response(
                         content=content,
@@ -277,10 +270,7 @@ async def analyze_data(
                         }
                     )
                 else:  # json
-                    content = await process_with_timeout(
-                        JSONResponse(content=json_compatible_data)
-                    )
-                    return content
+                    return JSONResponse(content=json_compatible_data)
                     
             except Exception as e:
                 logger.error(f"Export error: {str(e)}")
