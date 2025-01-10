@@ -22,6 +22,7 @@ from ..schemas.user import (
     RoleUpgradeRequest, UserUpdate
 )
 from .deps import get_current_user, get_current_admin
+from ..services.email.email_service import email_service
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -172,6 +173,7 @@ async def upgrade_user_role(
 ):
     """
     Upgrade the user's role from PUBLIC to DEVELOPER.
+    Now includes email notification for API key.
     """
     try:
         # Check if the current user is requesting the upgrade
@@ -191,8 +193,21 @@ async def upgrade_user_role(
         # Upgrade the user's role to DEVELOPER and generate a new API key
         current_user.role = upgrade_request.new_role
         current_user.api_key = await api_key_manager.generate_api_key()
+
+        # Commit changes first to ensure database update succeeds
         db.commit()
         db.refresh(current_user)
+        
+        # Send email notification
+        try:
+            await email_service.send_api_key_notification(
+                user_email=current_user.email,
+                api_key=current_user.api_key
+            )
+        except HTTPException as email_error:
+            # Log the email error but don't fail the upgrade
+            logger.error(f"Failed to send API key email: {str(email_error)}")
+            
         return current_user
     
     except Exception as e:
@@ -300,7 +315,8 @@ async def generate_api_key(
 ):
     """
     API key generation for developers
-    
+    Now includes email notification for new API key.
+
     Args:
         current_user (User): Currently authenticated user
         db (Session): Database session
@@ -322,6 +338,17 @@ async def generate_api_key(
         # Update user's API key
         current_user.api_key = new_api_key
         db.commit()
+        
+        # Send email notification
+        try:
+            await email_service.send_api_key_notification(
+                user_email=current_user.email,
+                api_key=new_api_key
+            )
+        except HTTPException as email_error:
+            # Log the email error but don't fail the key generation
+            logger.error(f"Failed to send API key email: {str(email_error)}")
+            # We continue since the key generation succeeded
         
         return {
             "status": "success",

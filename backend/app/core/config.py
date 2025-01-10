@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 60
 
+    # FinTrackIt configuration (for email service)
+    FINTRACKIT_API_KEY: str
+
     class Config:
         env_file = ".env"
         case_sensitive = True
