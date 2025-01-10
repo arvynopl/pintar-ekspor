@@ -1,25 +1,132 @@
-# .gitignore
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
 venv/
-.env
+env/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Node
 node_modules/
 dist/
+dist-ssr/
 .cache/
-
-# IDE
-.vscode/
-.idea/
+*.local
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+.env.development
+.env.test
+.env.production
+
+# Vercel
+.vercel
+.now
+
+# Railway
+.railway
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # Operating System
 .DS_Store
 Thumbs.db
+.directory
+.Spotlight-V100
+.Trashes
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Database
+*.sqlite3
+*.db
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Testing
+coverage/
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+
+# Production build files
+/build
+/dist
+/out
+
+# Dependencies lock files (keep these in version control)
+!package-lock.json
+!yarn.lock
+!poetry.lock
+
+# But ignore npm's debugging logs
+npm-debug.log*
+
+# Certificates and sensitive files
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.priv
+nginx/ssl/*
+nginx/certs/*
+!nginx/ssl/.gitkeep
+!nginx/certs/.gitkeep
+
+# Secrets and credentials
+secrets.*
+credentials.*
+*_credentials.*
+*_secrets.*
+
+# Nginx specific ignores
+nginx/*.conf.bak
+nginx/*.conf.old
+nginx/*.conf.save
+nginx/sites-available/*.conf.bak
+nginx/sites-enabled/*.conf.bak

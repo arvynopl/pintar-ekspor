@@ -1,5 +1,5 @@
 # backend/app/api/deps.py
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import (
     OAuth2PasswordBearer, 
     APIKeyHeader, 
@@ -58,6 +58,47 @@ async def get_current_user(
         
     return user
 
+async def get_api_key_user(
+    api_key_header: Optional[str] = Depends(api_key_header),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """
+    Validate API key from header or query parameter
+    
+    Args:
+        api_key_header (str, optional): API key from header
+        api_key_query (str, optional): API key from query parameter
+        db (Session): Database session
+    
+    Returns:
+        Optional[User]: User with matching API key or None
+    
+    Raises:
+        HTTPException: If API key is invalid
+    """
+    # Prioritize header, then query parameter
+    api_key = api_key_header
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required"
+        )
+    
+    # Find user with matching API key and developer role
+    user = db.query(User).filter(
+        User.api_key == api_key,
+        User.role == UserRole.DEVELOPER.value
+    ).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+    
+    return user
+
 def get_user_with_role(required_roles: Union[UserRole, list[UserRole]]):
     """
     Create a dependency for role-based access control
@@ -104,49 +145,20 @@ def get_user_with_role(required_roles: Union[UserRole, list[UserRole]]):
 # Predefined role checkers for common access scenarios
 get_current_admin = get_user_with_role(UserRole.ADMIN)
 get_current_developer = get_user_with_role(UserRole.DEVELOPER)
-get_current_public_user = get_user_with_role([
-    UserRole.PUBLIC, 
-    UserRole.DEVELOPER, 
-    UserRole.ADMIN
-])
-
-async def get_api_key_user(
-    api_key_header: Optional[str] = Depends(api_key_header),
+async def get_current_public_user(
+    token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> Optional[User]:
-    """
-    Validate API key from header or query parameter
-    
-    Args:
-        api_key_header (str, optional): API key from header
-        api_key_query (str, optional): API key from query parameter
-        db (Session): Database session
-    
-    Returns:
-        Optional[User]: User with matching API key or None
-    
-    Raises:
-        HTTPException: If API key is invalid
-    """
-    # Prioritize header, then query parameter
-    api_key = api_key_header
-    
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required"
-        )
-    
-    # Find user with matching API key and developer role
-    user = db.query(User).filter(
-        User.api_key == api_key,
-        User.role == UserRole.DEVELOPER.value
-    ).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    
-    return user
+    """Modified to work alongside API key auth"""
+    try:
+        payload = verify_token(token)
+        email: str = payload.get("sub")
+        
+        if email is None:
+            return None
+            
+        user = db.query(User).filter(User.email == email).first()
+        return user
+        
+    except Exception:
+        return None

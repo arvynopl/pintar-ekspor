@@ -15,7 +15,7 @@ from app.core.security import get_password_hash
 from app.models.base import Base  # Add this import
 
 # Using the same database URL as in docker-compose.yml
-DATABASE_URL = "postgresql://expor_user:password@db:5432/pintar_ekspor"
+DATABASE_URL = "postgresql://expor_user:AKUADALAHSANGPEMILIKD13!@db:5432/pintar_ekspor"
 
 def create_admin(email: str, password: str):
     engine = create_engine(DATABASE_URL)

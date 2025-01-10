@@ -4,16 +4,25 @@ from .user import User, UserRole
 from .course import Course
 from .progress import UserProgress
 from .analytics import AnalyticsData
+from ..core.audit import AuditBase, AuditLog
 
-# Create all tables
 def init_db():
     """
     Initialize database:
     1. Create enum types
-    2. Create all tables
+    2. Create all tables (including audit tables)
+    3. Handle initialization errors
     """
-    # Create enum types first
-    create_enum_type(UserRole)
-    
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
+    try:
+        # Create enum types first
+        create_enum_type(UserRole)
+        
+        # Create audit tables
+        AuditBase.metadata.create_all(bind=engine)
+        
+        # Create all other tables
+        Base.metadata.create_all(bind=engine)
+        
+    except Exception as e:
+        print(f"Database initialization error: {str(e)}")
+        raise

@@ -132,6 +132,9 @@ app = FastAPI(
     redoc_url=None  # Disable default redoc
 )
 
+# Create a reference to the rate limit middleware
+rate_limit_middleware = RateLimitMiddleware(app)
+
 # Configure trusted hosts
 app.add_middleware(
     TrustedHostMiddleware,
@@ -154,8 +157,8 @@ app.add_middleware(
 
 # Configure CORS
 app.add_middleware(
-    CORSMiddleware,  # Use FastAPI's built-in CORS middleware
-    allow_origins=["*"],  # Allow all origins in development
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -193,16 +196,17 @@ app.add_middleware(
 )
 
 # Add rate limiting
-app.add_middleware(RateLimitMiddleware)
+app.state.rate_limit_middleware = rate_limit_middleware
 
-# Add cleanup on shutdown
+# Then update the shutdown event to use the stored instance:
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup resources on application shutdown"""
-    # Get rate limit middleware instance
-    for middleware in app.middleware:
-        if isinstance(middleware, RateLimitMiddleware):
-            await middleware.cleanup()
+    try:
+        if hasattr(app.state, 'rate_limit_middleware'):
+            await app.state.rate_limit_middleware.cleanup()
+    except Exception as e:
+        logger.error(f"Error during shutdown cleanup: {str(e)}")
 
 # Ensure data directory exists
 data_dir = Path("data")

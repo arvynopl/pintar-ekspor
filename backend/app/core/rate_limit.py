@@ -139,15 +139,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.limiter = limiter or RateLimiter()
 
     async def dispatch(self, request: Request, call_next):
+        """Enhanced dispatch with better error handling"""
         try:
             # Start cleanup task if not running
             await self.limiter.start_cleanup()
 
             # Determine rate limit key based on request
-            limit_key = self._get_limit_key(request)
+            try:
+                limit_key = self._get_limit_key(request)
+            except Exception as e:
+                logger.error(f"Error getting rate limit key: {str(e)}")
+                return await call_next(request)  # Continue without rate limiting on error
 
             # Check rate limit
-            is_allowed, limit_info = await self.limiter.is_allowed(limit_key)
+            try:
+                is_allowed, limit_info = await self.limiter.is_allowed(limit_key)
+            except Exception as e:
+                logger.error(f"Rate limit check error: {str(e)}")
+                return await call_next(request)  # Continue without rate limiting on error
 
             if not is_allowed:
                 raise HTTPException(
@@ -161,21 +170,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Process request
             response = await call_next(request)
 
-            # Add rate limit headers
-            response.headers["X-RateLimit-Limit"] = str(limit_info["limit"])
-            response.headers["X-RateLimit-Remaining"] = str(limit_info["remaining"])
-            response.headers["X-RateLimit-Reset"] = limit_info["reset"]
+            # Add rate limit headers safely
+            try:
+                response.headers["X-RateLimit-Limit"] = str(limit_info["limit"])
+                response.headers["X-RateLimit-Remaining"] = str(limit_info["remaining"])
+                response.headers["X-RateLimit-Reset"] = limit_info["reset"]
+            except Exception as e:
+                logger.error(f"Error setting rate limit headers: {str(e)}")
 
             return response
 
-        except HTTPException as exc:
-            raise exc
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Error in rate limit middleware: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error during rate limiting"
-            )
+            logger.error(f"Unhandled error in rate limit middleware: {str(e)}")
+            return await call_next(request)  # Fallback to continue request processing
 
     def _get_limit_key(self, request: Request) -> str:
         """Generate rate limit key based on request characteristics"""

@@ -1,12 +1,18 @@
 # backend/app/api/analytics.py
+import asyncio
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from fastapi import (
-    APIRouter, File, UploadFile, Depends, 
-    HTTPException, Query, status, Response
+    APIRouter, File, UploadFile, HTTPException, Query, 
+    status, Response, Depends, Security, Request
 )
 from datetime import datetime
+from fastapi.security import APIKeyHeader
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+import numpy as np
+from sqlalchemy.orm import Session
 
 from ..services.data_processing.data_handler import DataHandler
 from ..services.data_processing.cleaner import DataCleaner
@@ -14,11 +20,15 @@ from ..services.data_processing.transformer import DataTransformer
 from ..services.analytics.statistics import DataAnalytics
 from ..services.analytics.export import DataExporter
 from ..services.visualization.chart_generator import ChartGenerator
+from ..core.rate_limit import RateLimitMiddleware
+from ..core.audit import AuditLogger
 from .deps import (
+    get_current_user,
     get_current_developer, 
-    get_api_key_user
+    get_api_key_user,
+    get_db
 )
-from ..models.user import User
+from ..models.user import User, UserRole
 
 # Initialize services
 data_handler = DataHandler()
@@ -33,6 +43,42 @@ logger = logging.getLogger(__name__)
 
 # Initialize router
 router = APIRouter()
+
+# API key authentication methods
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def get_analytics_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    jwt_user: Optional[User] = Depends(get_current_user),
+    api_key: Optional[str] = Security(api_key_header)
+) -> Tuple[User, str]:
+    """
+    Modified authentication that checks JWT first, then falls back to API key
+    """
+    # First try JWT authentication
+    if jwt_user:
+        return jwt_user, "jwt"
+    
+    # If no JWT, try API key
+    if api_key:
+        try:
+            user = db.query(User).filter(
+                User.api_key == api_key,
+                User.role == UserRole.DEVELOPER.value
+            ).first()
+            
+            if user:
+                return user, "api"
+        except Exception as e:
+            logger.error(f"API key validation error: {str(e)}")
+    
+    # If neither authentication method worked
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Valid authentication required (JWT token or API key)",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
 
 class AnalyticsError(Exception):
     """Custom exception for analytics-related errors"""
@@ -70,42 +116,58 @@ def _safe_json_response(data: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.post("/analyze")
 async def analyze_data(
+    request: Request,
     file: UploadFile = File(...),
-    # Use API key or developer authentication
-    _: User = Depends(get_api_key_user),
-    include_forecast: bool = Query(True, description="Include forecast in analysis"),
-    include_visualizations: bool = Query(False, description="Include visualization configurations in export"),
+    current_user_tuple: Tuple[User, str] = Depends(get_analytics_user),
+    db: Session = Depends(get_db),
+    include_forecast: bool = Query(True),
+    include_visualizations: bool = Query(False),
     export_format: Optional[str] = Query(None, regex="^(csv|json)$"),
 ):
     """
-    Primary endpoint for comprehensive data analysis
-    
-    Args:
-        file (UploadFile): Input data file for analysis
-        _: API key validated user
-        include_forecast (bool): Flag to include forecasting
-        include_visualizations (bool): Flag to include visualization configs
-        export_format (Optional[str]): Optional export format
-    
-    Returns:
-        Analysis results with optional export
-    
-    Raises:
-        HTTPException: For various processing errors
+    Primary endpoint for comprehensive data analysis with enhanced error handling
     """
-    try:
-        # 1. Process uploaded file
+    current_user, auth_type = current_user_tuple
+
+    async def process_with_timeout(coro, timeout=30):
         try:
-            pair_dataframes = await data_handler.process_upload(file)
+            return await asyncio.wait_for(coro, timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                detail="Processing timeout exceeded"
+            )
+
+    try:
+        # 1. Process uploaded file with timeout
+        try:
+            pair_dataframes = await process_with_timeout(
+                data_handler.process_upload(file)
+            )
             if not pair_dataframes:
                 raise AnalyticsError("No valid data found in uploaded file")
             logger.info(f"Processed {len(pair_dataframes)} category pairs")
         except Exception as e:
             raise AnalyticsError("Error processing upload", {"error": str(e)})
 
+        # Add audit log with error handling
+        try:
+            audit_logger = AuditLogger(db)
+            await process_with_timeout(audit_logger.log_change(
+                action="ANALYZE_DATA",
+                table_name="analytics_data",
+                user_id=current_user.id,
+                ip_address=request.client.host
+            ))
+        except Exception as e:
+            logger.error(f"Audit logging error: {str(e)}")
+            # Continue processing even if audit log fails
+
         # 2. Clean data
         try:
-            cleaned_pairs, quality_metrics = data_cleaner.clean_pairs(pair_dataframes)
+            cleaned_pairs, quality_metrics = await process_with_timeout(
+                asyncio.to_thread(data_cleaner.clean_pairs, pair_dataframes)
+            )
             if not cleaned_pairs:
                 raise AnalyticsError("No valid data after cleaning")
             logger.info("Data cleaning completed")
@@ -114,7 +176,9 @@ async def analyze_data(
 
         # 3. Transform data
         try:
-            transformed_pairs, transform_metrics = data_transformer.transform_pairs(cleaned_pairs)
+            transformed_pairs, transform_metrics = await process_with_timeout(
+                asyncio.to_thread(data_transformer.transform_pairs, cleaned_pairs)
+            )
             if not transformed_pairs:
                 raise AnalyticsError("No valid data after transformation")
             logger.info("Data transformation completed")
@@ -123,9 +187,12 @@ async def analyze_data(
 
         # 4. Perform analysis
         try:
-            analysis_results = analytics_service.analyze_pairs(
-                transformed_pairs,
-                include_forecast=include_forecast
+            analysis_results = await process_with_timeout(
+                asyncio.to_thread(
+                    analytics_service.analyze_pairs,
+                    transformed_pairs,
+                    include_forecast=include_forecast
+                )
             )
             if not analysis_results:
                 raise AnalyticsError("Analysis produced no valid results")
@@ -138,16 +205,24 @@ async def analyze_data(
         try:
             for pair_key, analysis in analysis_results.items():
                 # Trend chart
-                trend_chart = chart_generator.generate_trend_chart(
-                    transformed_pairs[pair_key],
-                    analysis.trend_analysis,
-                    analysis.forecast if include_forecast else None
+                trend_chart = await process_with_timeout(
+                    asyncio.to_thread(
+                        chart_generator.generate_trend_chart,
+                        transformed_pairs[pair_key],
+                        analysis.trend_analysis,
+                        analysis.forecast if include_forecast else None
+                    )
                 )
                 if trend_chart:
                     visualizations[f"{pair_key}_trend"] = trend_chart
 
             # Category strength chart
-            strength_chart = chart_generator.generate_category_strength_chart(analysis_results)
+            strength_chart = await process_with_timeout(
+                asyncio.to_thread(
+                    chart_generator.generate_category_strength_chart,
+                    analysis_results
+                )
+            )
             if strength_chart:
                 visualizations['category_strength'] = strength_chart
         except Exception as e:
@@ -171,14 +246,28 @@ async def analyze_data(
         # Ensure response is JSON-safe
         safe_response = _safe_json_response(response_data)
 
+        # Ensure safe serialization
+        json_compatible_data = jsonable_encoder(
+            safe_response,
+            custom_encoder={
+                np.integer: lambda x: int(x),
+                np.floating: lambda x: float(x),
+                np.ndarray: lambda x: x.tolist(),
+            }
+        )
+
         # Export if format specified
         if export_format:
             try:
                 if export_format == 'csv':
-                    content = exporter.export_to_csv(
-                        transformed_pairs, 
-                        analysis_results,
-                        visualizations if include_visualizations else None
+                    content = await process_with_timeout(
+                        asyncio.to_thread(
+                            content = exporter.export_to_csv(
+                                transformed_pairs, 
+                                analysis_results,
+                                visualizations if include_visualizations else None
+                            )
+                        )
                     )
                     return Response(
                         content=content,
@@ -188,27 +277,19 @@ async def analyze_data(
                         }
                     )
                 else:  # json
-                    content = exporter.export_to_json(
-                        transformed_pairs, 
-                        analysis_results,
-                        visualizations if include_visualizations else None
+                    content = await process_with_timeout(
+                        JSONResponse(content=json_compatible_data)
                     )
-                    return Response(
-                        content=content,
-                        media_type="application/json",
-                        headers={
-                            "Content-Disposition": f"attachment; filename=analysis_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                        }
-                    )
+                    return content
+                    
             except Exception as e:
                 logger.error(f"Export error: {str(e)}")
-                # Add more detailed error handling
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={"message": f"Export to {export_format} failed", "error": str(e)}
                 )
 
-        return safe_response
+        return JSONResponse(content=json_compatible_data)
 
     except AnalyticsError as e:
         logger.error(f"Analytics error: {e.message}")
@@ -216,11 +297,17 @@ async def analyze_data(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": e.message, "details": e.details}
         )
+    except asyncio.CancelledError:
+        logger.error("Task cancelled")
+        raise HTTPException(
+            status_code=status.HTTP_499_CLIENT_CLOSED_REQUEST,
+            detail="Request cancelled"
+        )
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Error in analyze_data: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred processing the analysis"
+            detail="An unexpected error occurred"
         )
 
 @router.post("/quick-analysis")
