@@ -1,5 +1,5 @@
 # backend/app/core/rate_limit.py
-from fastapi import Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Dict, Optional, Tuple, Any
 import time
@@ -134,8 +134,8 @@ class RateLimiter:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware for rate limiting requests"""
 
-    def __init__(self, app, limiter: RateLimiter = None):
-        super().__init__(app)
+    def __init__(self, app: FastAPI, limiter: Optional[RateLimiter] = None):
+        self.app = app
         self.limiter = limiter or RateLimiter()
 
     async def dispatch(self, request: Request, call_next):
@@ -206,6 +206,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # General requests
         return f"general:{ip}"
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         """Cleanup rate limiter resources"""
-        await self.limiter.stop_cleanup()
+        if hasattr(self, 'limiter'):
+            await self.limiter.stop_cleanup()
