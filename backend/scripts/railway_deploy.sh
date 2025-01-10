@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# backend/scripts/deploy.sh
+# backend/scripts/railway_deploy.sh
 set -e
 
 echo "Starting deployment process..."
@@ -9,9 +9,10 @@ echo "Starting deployment process..."
 echo "Running database migrations..."
 python scripts/init_db.py
 
-# Step 2: Start the application with production settings
-echo "Starting application..."
-uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 4 --proxy-headers --forwarded-allow-ips='*'
+# Step 2: Configure security
+echo "Setting up security configurations..."
+bash scripts/setup_firewall.sh
 
-# Note: This script will be called by Railway automatically
-# Make sure to set executable permissions: chmod +x scripts/deploy.sh
+# Step 3: Start the application with production settings
+echo "Starting application with Uvicorn..."
+uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 --proxy-headers --forwarded-allow-ips='*'

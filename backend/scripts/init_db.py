@@ -1,12 +1,15 @@
 # backend/scripts/init_db.py
 import asyncio
 import sys
-sys.path.append("..")  # Add parent directory to Python path
+sys.path.append("..")
 
 from app.core.config import settings
-from app.models.base import Base
 from sqlalchemy.ext.asyncio import create_async_engine
-from app.models.user import User
+from app.models.base import Base
+from app.models.user import User, UserRole
+from app.models.course import Course
+from app.models.analytics import AnalyticsData
+from app.models.progress import UserProgress
 from app.core.security import get_password_hash
 from loguru import logger
 
@@ -21,17 +24,18 @@ async def init_db():
 
         logger.info("Creating database tables...")
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+            # Create all tables
             await conn.run_sync(Base.metadata.create_all)
 
         logger.info("Creating default admin user...")
         # Create default admin user
         admin_data = {
-            "email": "admin@pintarexpor.com",
-            "hashed_password": get_password_hash("admin123"),  # Change this in production!
-            "is_active": True,
-            "is_superuser": True,
-            "role": "admin"
+            "email": "admin@pintarekspor.com",
+            "hashed_password": get_password_hash("AKUADALAHSANG4DMIN!"),
+            "role": UserRole.ADMIN.value,
+            "refresh_token": None,
+            "api_key": None,
+            "last_login": None
         }
 
         async with engine.begin() as conn:

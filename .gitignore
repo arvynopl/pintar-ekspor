@@ -130,3 +130,6 @@ nginx/*.conf.old
 nginx/*.conf.save
 nginx/sites-available/*.conf.bak
 nginx/sites-enabled/*.conf.bak
+
+# Vercel
+.vercel
