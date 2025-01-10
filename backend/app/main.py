@@ -128,36 +128,31 @@ app = FastAPI(
     title="Pintar Ekspor API",
     description="API for Pintar Ekspor platform with analytics capabilities",
     version="1.0.0",
-    docs_url=None,  # Disable default docs
-    redoc_url=None  # Disable default redoc
+    docs_url=None,
+    redoc_url=None
 )
 
 # Create a reference to the rate limit middleware
 rate_limit_middleware = RateLimitMiddleware(app)
 
-# Configure trusted hosts
+# Add rate limiting
+app.state.rate_limit_middleware = rate_limit_middleware
+
+# Remove duplicate CORS middleware and consolidate into one
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS.split(","),
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600  # Cache preflight requests for 10 minutes
 )
 
-# Add security headers
+# Add security headers middleware
 app.add_middleware(
     SecurityHeadersMiddleware,
-    allowed_hosts=settings.ALLOWED_HOSTS.split(",")
-)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS.split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allowed_hosts=settings.ALLOWED_HOSTS
 )
 
 # Custom documentation endpoints
@@ -171,9 +166,6 @@ async def custom_swagger_ui_html():
         swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
         swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
     )
-
-# Add rate limiting
-app.state.rate_limit_middleware = rate_limit_middleware
 
 # Then update the shutdown event to use the stored instance:
 @app.on_event("shutdown")
