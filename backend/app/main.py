@@ -16,6 +16,7 @@ from typing import List, Optional
 from .api import auth, courses, analytics
 from .models import init_db
 from .core.config import get_settings
+from .core.types import TypedFastAPI, AppState
 from .core.rate_limit import RateLimitMiddleware
 
 # Configure logging
@@ -123,8 +124,8 @@ class CORSConfigMiddleware(BaseHTTPMiddleware):
             return origin.startswith(pattern[:-1])
         return origin == pattern
 
-# Create FastAPI app
-app = FastAPI(
+# Create the FastAPI application with our custom type
+app = TypedFastAPI(
     title="Pintar Ekspor API",
     description="API for Pintar Ekspor platform with analytics capabilities",
     version="1.0.0",
@@ -132,16 +133,17 @@ app = FastAPI(
     redoc_url=None
 )
 
-# Create a reference to the rate limit middleware
-rate_limit_middleware = RateLimitMiddleware(app)
+# Initialize the application state
+app.state = AppState()
 
-# Add rate limiting
+# Create and store the rate limit middleware
+rate_limit_middleware = RateLimitMiddleware(app)
 app.state.rate_limit_middleware = rate_limit_middleware
 
 # Remove duplicate CORS middleware and consolidate into one
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=settings.get_origins_list(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -152,7 +154,7 @@ app.add_middleware(
 # Add security headers middleware
 app.add_middleware(
     SecurityHeadersMiddleware,
-    allowed_hosts=settings.ALLOWED_HOSTS
+    allowed_hosts=settings.get_hosts_list()
 )
 
 # Custom documentation endpoints
@@ -167,12 +169,12 @@ async def custom_swagger_ui_html():
         swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
     )
 
-# Then update the shutdown event to use the stored instance:
+# Update the shutdown event to use the stored instance:
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup resources on application shutdown"""
     try:
-        if hasattr(app.state, 'rate_limit_middleware'):
+        if app.state.rate_limit_middleware is not None:
             await app.state.rate_limit_middleware.cleanup()
     except Exception as e:
         logger.error(f"Error during shutdown cleanup: {str(e)}")
