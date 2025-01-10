@@ -137,18 +137,6 @@ class AnalyticsService {
 
     return response;
   }
-
-  // Helper method to process and download exported data
-  private downloadFile(blob: Blob, filename: string): void {
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
-  }
 }
 
 export const analyticsService = new AnalyticsService();

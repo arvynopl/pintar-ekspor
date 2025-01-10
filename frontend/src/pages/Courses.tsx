@@ -28,9 +28,12 @@ export default function Courses() {
   const [filteredCourses, setFilteredCourses] = useState<CourseWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortConfig, setSortConfig] = useState({
-    option: 'title' as const,
-    direction: 'asc' as const
+  const [sortConfig, setSortConfig] = useState<{
+    option: 'title' | 'progress';
+    direction: 'asc' | 'desc';
+  }>({
+    option: 'title',
+    direction: 'asc'
   });
 
   // Fetch courses and their progress
