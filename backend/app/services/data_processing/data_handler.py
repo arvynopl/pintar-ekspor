@@ -66,20 +66,31 @@ class DataHandler:
             raise ValueError("Unsupported file format. Use .csv or .json")
 
     def _process_csv(self, content: bytes) -> Dict[str, pd.DataFrame]:
-        """
-        Process CSV content into pair dataframes.
-        Handles both date-category-value and date-column-value pair formats.
-        """
+        """Process CSV content into pair dataframes."""
         try:
-            # Read CSV
             df = pd.read_csv(io.BytesIO(content))
             self.logger.info(f"Loaded CSV with columns: {df.columns.tolist()}")
-            
-            # Handle standard format (date, category, value)
-            if set(df.columns) == {'date', 'category', 'value'}:
+
+            if set(df.columns) == {"date", "category", "value"}:
                 self.logger.info("Processing standard format")
                 return self._process_standard_format(df)
-            
+
+            if "date" in df.columns:
+                self.logger.info("Processing wide column format")
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.dropna(subset=["date"])
+                pairs: Dict[str, pd.DataFrame] = {}
+                for column in df.columns:
+                    if column == "date":
+                        continue
+                    category_df = df[["date", column]].rename(columns={column: "value"})
+                    category_df.set_index("date", inplace=True)
+                    pairs[f"category_{column}"] = category_df
+                if pairs:
+                    return pairs
+
+            raise ValueError("Unsupported CSV format")
+
         except Exception as e:
             self.logger.error(f"Error processing CSV: {str(e)}")
             raise ValueError(f"Error processing CSV: {str(e)}")
@@ -87,21 +98,33 @@ class DataHandler:
     def _process_json(self, content: bytes) -> Dict[str, pd.DataFrame]:
         """Process JSON content into pair dataframes."""
         try:
-            # Parse JSON
-            data = json.loads(content.decode('utf-8'))
-            
-            # Convert to DataFrame
+            data = json.loads(content.decode("utf-8"))
+
             if isinstance(data, list):
                 df = pd.DataFrame(data)
-            elif isinstance(data, dict) and 'data' in data:
-                df = pd.DataFrame(data['data'])
+            elif isinstance(data, dict) and "data" in data:
+                df = pd.DataFrame(data["data"])
             else:
                 raise ValueError("Invalid JSON structure")
-            
-            # Process based on format
-            if set(df.columns) == {'date', 'category', 'value'}:
+
+            if set(df.columns) == {"date", "category", "value"}:
                 return self._process_standard_format(df)
-            
+
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.dropna(subset=["date"])
+                pairs: Dict[str, pd.DataFrame] = {}
+                for column in df.columns:
+                    if column == "date":
+                        continue
+                    category_df = df[["date", column]].rename(columns={column: "value"})
+                    category_df.set_index("date", inplace=True)
+                    pairs[f"category_{column}"] = category_df
+                if pairs:
+                    return pairs
+
+            raise ValueError("Unsupported JSON format")
+
         except Exception as e:
             raise ValueError(f"Error processing JSON: {str(e)}")
 
